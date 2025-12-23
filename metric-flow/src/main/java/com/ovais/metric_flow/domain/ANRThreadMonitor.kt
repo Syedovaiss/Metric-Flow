@@ -9,19 +9,48 @@ internal object ANRThreadMonitor : Thread("ANRThreadMonitor") {
     private const val TAG = "PerfMon"
     private const val TIMEOUT_MS = 5000L
     private val handler = Handler(Looper.getMainLooper())
+    
+    @Volatile
     private var running = false
+    
+    @Volatile
+    private var isStarted = false
 
+    @Synchronized
     fun startMonitoring() {
+        if (isStarted) {
+            Log.d(TAG, "ANRThreadMonitor already started, skipping")
+            return
+        }
         if (!running) {
             running = true
-            start()
-            Log.d(TAG, "ANRThreadMonitor started")
+            isStarted = true
+            try {
+                start()
+                Log.d(TAG, "ANRThreadMonitor started")
+            } catch (e: IllegalThreadStateException) {
+                // Thread already started
+                running = false
+                isStarted = false
+                Log.e(TAG, "Failed to start ANRThreadMonitor", e)
+            }
         }
     }
 
+    @Synchronized
     fun stopMonitoring() {
+        if (!isStarted) {
+            return
+        }
         running = false
-        interrupt()
+        isStarted = false
+        try {
+            if (isAlive && !isInterrupted) {
+                interrupt()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping ANRThreadMonitor", e)
+        }
         Log.d(TAG, "ANRThreadMonitor stopped")
     }
 

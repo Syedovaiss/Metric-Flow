@@ -1,4 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Permission for network monitoring -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    
+    <!-- Permission for network state monitoring -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    
+    <!-- Permission for battery monitoring -->
+    <uses-permission android:name="android.permission.BATTERY_STATS" 
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- Optional: Permission for LogCat collection (requires root on production devices) -->
+    <!-- <uses-permission android:name="android.permission.READ_LOGS" /> -->
 
 </manifest>

@@ -10,6 +10,9 @@ interface FrameObserver {
 
 class DefaultFrameObserver : Choreographer.FrameCallback, FrameObserver {
 
+    @Volatile
+    private var isInstalled = false
+
     private var lastFrameTimeNanos = 0L
     private var frameCount = 0
     private var lastFpsTimestamp = 0L
@@ -17,6 +20,13 @@ class DefaultFrameObserver : Choreographer.FrameCallback, FrameObserver {
     private val choreographer: Choreographer by lazy { Choreographer.getInstance() }
 
     override fun install() {
+        synchronized(this) {
+            if (isInstalled) {
+                Timber.tag("PerfMon").w("FrameObserver already installed, skipping")
+                return
+            }
+            isInstalled = true
+        }
         start()
     }
 
@@ -44,12 +54,22 @@ class DefaultFrameObserver : Choreographer.FrameCallback, FrameObserver {
         choreographer.postFrameCallback(this)
     }
 
-    override fun start() {
+    private fun start() {
         choreographer.postFrameCallback(this)
     }
 
     override fun stop() {
-        choreographer.removeFrameCallback(this)
+        synchronized(this) {
+            if (!isInstalled) {
+                return
+            }
+            isInstalled = false
+        }
+        try {
+            choreographer.removeFrameCallback(this)
+        } catch (e: Exception) {
+            Timber.tag("PerfMon").e(e, "Error removing frame callback")
+        }
     }
 
 }

@@ -63,6 +63,8 @@ object MemoryTracker {
     private var application: Application? = null
     private var config: Config = Config()
     private var listener: Listener? = null
+    
+    private val installLock = Any()
 
     private val scheduler = ScheduledThreadPoolExecutor(1).apply {
         removeOnCancelPolicy = true
@@ -107,58 +109,89 @@ object MemoryTracker {
         config: Config = Config(),
         listener: Listener? = null
     ) {
-        if (installed) return
-        installed = true
+        requireNotNull(application) { "Application cannot be null" }
+        require(config.sampleIntervalMs > 0) { "sampleIntervalMs must be greater than 0" }
+        require(config.lowMemoryTrimThresholdKb >= 0) { "lowMemoryTrimThresholdKb must be non-negative" }
+        
+        synchronized(installLock) {
+            if (installed) {
+                Timber.tag("MemoryTracker").w("MemoryTracker already installed, skipping")
+                return
+            }
+            installed = true
+        }
+        
         this.application = application
         this.config = config
         this.listener = listener
 
         Timber.tag("MemoryTracker").d("install: sampleIntervalMs=%d", config.sampleIntervalMs)
 
-        // register callbacks
-        application.registerComponentCallbacks(componentCallbacks)
+        try {
+            // register callbacks
+            application.registerComponentCallbacks(componentCallbacks)
 
-        // prepare dump handler thread if heap dump enabled
-        if (config.enableHeapDumpOnLowMemory) {
-            val t = HandlerThread("MemoryTrackerDump").apply { start() }
-            dumpHandler = Handler(t.looper)
-        }
-
-        // schedule periodic sampling
-        scheduledFuture = scheduler.scheduleWithFixedDelay({
-            try {
-                val snap = sampleNow()
-                if (snap != null) {
-                    if (config.logSamples) Timber.tag("MemoryTracker").d("Memory sample: %s", snap)
-                    listener?.onSample(snap)
-                    if (snap.lowMemory && config.enableHeapDumpOnLowMemory) {
-                        performHeapDumpAsync()
-                    }
-                }
-            } catch (t: Throwable) {
-                Timber.tag("MemoryTracker").e(t, "MemoryTracker periodic sample failed")
+            // prepare dump handler thread if heap dump enabled
+            if (config.enableHeapDumpOnLowMemory) {
+                val t = HandlerThread("MemoryTrackerDump").apply { start() }
+                dumpHandler = Handler(t.looper)
             }
-        }, 0L, config.sampleIntervalMs, TimeUnit.MILLISECONDS)
+
+            // schedule periodic sampling
+            scheduledFuture = scheduler.scheduleWithFixedDelay({
+                try {
+                    val snap = sampleNow()
+                    if (snap != null) {
+                        if (config.logSamples) Timber.tag("MemoryTracker").d("Memory sample: %s", snap)
+                        listener?.onSample(snap)
+                        if (snap.lowMemory && config.enableHeapDumpOnLowMemory) {
+                            performHeapDumpAsync()
+                        }
+                    }
+                } catch (t: Throwable) {
+                    Timber.tag("MemoryTracker").e(t, "MemoryTracker periodic sample failed")
+                }
+            }, 0L, config.sampleIntervalMs, TimeUnit.MILLISECONDS)
+        } catch (e: Exception) {
+            synchronized(installLock) {
+                installed = false
+            }
+            Timber.tag("MemoryTracker").e(e, "Failed to install MemoryTracker")
+            throw e
+        }
     }
 
     fun uninstall() {
-        if (!installed) return
-        installed = false
+        synchronized(installLock) {
+            if (!installed) {
+                return
+            }
+            installed = false
+        }
+        
         try {
             application?.unregisterComponentCallbacks(componentCallbacks)
+        } catch (e: IllegalArgumentException) {
+            // Callbacks not registered - this is OK
+            Timber.tag("MemoryTracker").d("ComponentCallbacks already unregistered")
         } catch (e: Throwable) {
-            Timber.e(e)
+            Timber.tag("MemoryTracker").e(e, "Error unregistering ComponentCallbacks")
         }
+        
         scheduledFuture?.cancel(true)
         scheduledFuture = null
+        
         try {
             dumpHandler?.looper?.thread?.interrupt()
             dumpHandler = null
         } catch (e: Throwable) {
-            Timber.e(e)
+            Timber.tag("MemoryTracker").e(e, "Error interrupting dump handler thread")
         }
-        listener = null
-        application = null
+        
+        synchronized(installLock) {
+            listener = null
+            application = null
+        }
         Timber.tag("MemoryTracker").d("uninstalled")
     }
 

@@ -26,20 +26,77 @@ class DefaultScreenshotCapturer : ScreenshotCapturer {
     private val dateTimeManager by lazy { DefaultDateTimeManager() }
 
     override fun install(activityProvider: ActivityProvider) {
-        val activity = activityProvider.currentActivity
-        val rootView = activity?.window?.decorView?.rootView ?: return
-        val bitmap = createBitmap(rootView.width, rootView.height)
-        val canvas = Canvas(bitmap)
-        rootView.draw(canvas)
-        val file = File(
-            activity.applicationContext.cacheDir,
-            buildCrashFileName(activity.localClassName)
-        )
-        FileOutputStream(file).use {
-            bitmap.compress(Bitmap.CompressFormat.PNG, 90, it)
+        try {
+            val activity = activityProvider.currentActivity ?: run {
+                Log.w("PerfMon", "No current activity available for screenshot")
+                return
+            }
+            
+            val window = activity.window ?: run {
+                Log.w("PerfMon", "Activity window is null")
+                return
+            }
+            
+            val rootView = window.decorView?.rootView ?: run {
+                Log.w("PerfMon", "Root view is null")
+                return
+            }
+            
+            val width = rootView.width
+            val height = rootView.height
+            
+            if (width <= 0 || height <= 0) {
+                Log.w("PerfMon", "Invalid view dimensions: ${width}x${height}")
+                return
+            }
+            
+            val bitmap = try {
+                createBitmap(width, height)
+            } catch (e: OutOfMemoryError) {
+                Log.e("PerfMon", "Out of memory creating bitmap", e)
+                return
+            }
+            
+            val canvas = Canvas(bitmap)
+            try {
+                rootView.draw(canvas)
+            } catch (e: Exception) {
+                Log.e("PerfMon", "Error drawing view to canvas", e)
+                bitmap.recycle()
+                return
+            }
+            
+            val cacheDir = activity.applicationContext.cacheDir
+            if (cacheDir == null || !cacheDir.exists()) {
+                Log.e("PerfMon", "Cache directory not available")
+                bitmap.recycle()
+                return
+            }
+            
+            val fileName = try {
+                buildCrashFileName(activity.localClassName ?: "Unknown")
+            } catch (e: Exception) {
+                Log.e("PerfMon", "Error building file name", e)
+                bitmap.recycle()
+                return
+            }
+            
+            val file = File(cacheDir, fileName)
+            try {
+                FileOutputStream(file).use { outputStream ->
+                    if (!bitmap.compress(Bitmap.CompressFormat.PNG, 90, outputStream)) {
+                        Log.e("PerfMon", "Failed to compress bitmap")
+                    }
+                }
+                Log.d("PerfMon", "Screenshot saved: ${file.path}")
+            } catch (e: Exception) {
+                Log.e("PerfMon", "Error saving screenshot", e)
+            } finally {
+                bitmap.recycle()
+            }
+        } catch (e: Exception) {
+            Log.e("PerfMon", "Unexpected error capturing screenshot", e)
         }
-
-        Log.d("PerfMon", "Screenshot saved: ${file.path}")
     }
 
     private fun buildCrashFileName(className: String) = buildString {

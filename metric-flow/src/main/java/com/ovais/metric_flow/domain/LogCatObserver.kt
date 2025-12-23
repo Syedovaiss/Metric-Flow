@@ -1,12 +1,12 @@
-package com.ovais.metric_flow.observers
+package com.ovais.metric_flow.domain
 
-import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.text.SimpleDateFormat
@@ -29,14 +29,14 @@ object LogCatCollector {
         listener: ((String) -> Unit)? = null
     ) {
         if (isInstalled.get()) {
-            Log.d(TAG, "LogCatCollector already installed")
+            Timber.tag(TAG).d("LogCatCollector already installed")
             return
         }
         isInstalled.set(true)
         logFilterTag = filterTag
         logListener = listener
         startCollecting()
-        Log.d(TAG, "LogCatCollector installed (capturing W & E only)")
+        Timber.tag(TAG).d("LogCatCollector installed (capturing W & E only)")
     }
 
     private fun startCollecting() {
@@ -62,17 +62,32 @@ object LogCatCollector {
 
                 process.destroy()
             } catch (e: Exception) {
-                Log.e(TAG, "Error reading Logcat: ${e.message}", e)
+                Timber.tag(TAG).e(e, "Error reading Logcat: ${e.message}")
             }
         }
     }
 
     fun release() {
-        if (!isInstalled.get()) return
-        logJob?.cancel()
-        coroutineScope.cancel()
-        isInstalled.set(false)
-        Log.d(TAG, "LogCatCollector stopped")
+        if (!isInstalled.getAndSet(false)) {
+            return
+        }
+        
+        try {
+            logJob?.cancel()
+        } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "Error cancelling log job")
+        }
+        
+        try {
+            coroutineScope.cancel()
+        } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "Error cancelling coroutine scope")
+        }
+        
+        logJob = null
+        logFilterTag = null
+        logListener = null
+        Timber.tag(TAG).d("LogCatCollector stopped")
     }
 
     private fun shouldInclude(logLine: String): Boolean {

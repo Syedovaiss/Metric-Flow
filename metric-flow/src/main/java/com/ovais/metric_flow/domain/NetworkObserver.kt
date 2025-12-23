@@ -7,22 +7,54 @@ import io.ktor.util.AttributeKey
 import okhttp3.Interceptor
 import timber.log.Timber
 
-fun interface NetworkObserver {
+interface NetworkObserver {
     fun install(type: NetworkClientType)
+    fun release()
 }
 
 class DefaultNetworkObserver : NetworkObserver {
+    private var installedType: NetworkClientType? = null
 
     override fun install(type: NetworkClientType) {
+        installedType = type
         when (type) {
             NetworkClientType.OkHttp -> OkHttpNetworkObserver.install()
             NetworkClientType.Ktor -> KtorNetworkObserver.install()
+            NetworkClientType.Retrofit -> RetrofitNetworkObserver.install()
+            NetworkClientType.HttpURLConnection -> HttpURLConnectionObserver.install()
+            NetworkClientType.Volley -> VolleyNetworkObserver.install()
+            NetworkClientType.Auto -> {
+                // Auto-detect: Most apps use OkHttp/Retrofit, so default to that
+                Timber.tag("PerfMon")
+                    .d("Auto-detecting network type, defaulting to OkHttp/Retrofit")
+                OkHttpNetworkObserver.install()
+                RetrofitNetworkObserver.install()
+            }
         }
+    }
+
+    override fun release() {
+        when (installedType) {
+            NetworkClientType.OkHttp -> OkHttpNetworkObserver.uninstall()
+            NetworkClientType.Ktor -> KtorNetworkObserver.uninstall()
+            NetworkClientType.Retrofit -> RetrofitNetworkObserver.uninstall()
+            NetworkClientType.HttpURLConnection -> HttpURLConnectionObserver.uninstall()
+            NetworkClientType.Volley -> VolleyNetworkObserver.uninstall()
+            NetworkClientType.Auto -> {
+                OkHttpNetworkObserver.uninstall()
+                RetrofitNetworkObserver.uninstall()
+            }
+
+            null -> { /* Not installed */
+            }
+        }
+        installedType = null
     }
 }
 
 object OkHttpNetworkObserver {
 
+    @Volatile
     private var isInstalled = false
 
     fun install() {
@@ -31,6 +63,15 @@ object OkHttpNetworkObserver {
         Timber.tag("PerfMon").d("OkHttp NetworkObserver installed")
     }
 
+    fun uninstall() {
+        isInstalled = false
+        Timber.tag("PerfMon").d("OkHttp NetworkObserver uninstalled")
+    }
+
+    /**
+     * Creates an OkHttp Interceptor for network monitoring.
+     * Add this to your OkHttpClient using: client.addInterceptor(OkHttpNetworkObserver.createInterceptor())
+     */
     fun createInterceptor(): Interceptor = Interceptor { chain ->
         val request = chain.request()
         val startNs = System.nanoTime()
@@ -59,8 +100,9 @@ object OkHttpNetworkObserver {
     }
 }
 
-internal object KtorNetworkObserver {
+object KtorNetworkObserver {
 
+    @Volatile
     private var isInstalled = false
 
     fun install() {
@@ -69,7 +111,16 @@ internal object KtorNetworkObserver {
         Timber.tag("PerfMon").d("Ktor NetworkObserver: installing PerformancePlugin...")
     }
 
-    private val MetricFlowPlugin = createClientPlugin("MetricFlow") {
+    fun uninstall() {
+        isInstalled = false
+        Timber.tag("PerfMon").d("Ktor NetworkObserver uninstalled")
+    }
+
+    /**
+     * Returns the MetricFlow plugin for Ktor client.
+     * Install it using: HttpClient { install(MetricFlowPlugin) }
+     */
+    val MetricFlowPlugin = createClientPlugin("MetricFlow") {
         onRequest { request, content ->
             request.attributes.put(StartTimeKey, System.nanoTime())
         }
